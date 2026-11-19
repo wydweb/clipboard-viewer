@@ -3,7 +3,6 @@ import {
   Clipboard,
   FileText,
   Image,
-  ScanLine,
   History,
   Trash2,
   RefreshCw,
@@ -25,12 +24,10 @@ import { FormatSelector } from "./FormatSelector";
 import { ActionButtons } from "./ActionButtons";
 import { StatusMessage } from "./StatusMessage";
 import HistoryViewer from "./HistoryViewer";
-import { ClipboardInspector } from "./ClipboardInspector";
 
 const modes = [
   { id: "parse", label: "解析模式", shortLabel: "解析", Icon: Clipboard },
   { id: "write", label: "写入模式", shortLabel: "写入", Icon: FileText },
-  { id: "inspector", label: "环境检查", shortLabel: "检查", Icon: ScanLine },
 ] as const;
 
 export function ClipboardDebugTool() {
@@ -197,11 +194,6 @@ export function ClipboardDebugTool() {
                     ? "继续粘贴"
                     : "使用快捷键粘贴"}
               </h2>
-              <p>
-                {parseSource === "read" && parseData.length
-                  ? "直接读取的格式可能不完整，建议再粘贴一次。"
-                  : "粘贴通常能获取更完整的格式。"}
-              </p>
             </div>
             <div
               className="shortcut paste-keyboard"
@@ -296,7 +288,6 @@ export function ClipboardDebugTool() {
           </div>
         </section>
       )}
-      {mode === "inspector" && <ClipboardInspector />}
       {history.isVisible && <HistoryViewer />}
       <section className="surface environment-card" aria-label="当前环境">
         <div className="environment-grid">

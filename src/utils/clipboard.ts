@@ -4,12 +4,13 @@ import {
   ClipboardParseResult,
   ClipboardDataItem,
   ClipboardDataType,
+  ClipboardBridgeEntry,
   FileInfo,
 } from "../types";
 
 // 提取的剪贴板数据接口
 interface ExtractedClipboardData {
-  type: "DataTransfer" | "ClipboardItem";
+  type: "DataTransfer";
   types?: Array<{
     type: string;
     data: string | FileInfo;
@@ -30,53 +31,33 @@ const createFileInfo = (file: File | null): FileInfo | null => {
     size: file.size,
     type: file.type,
     url: URL.createObjectURL(file),
+    lastModified: file.lastModified,
   };
 };
 
-// 核心数据提取函数，完全按照 clipboard-inspector 的方式
+// 核心数据提取函数（粘贴 / 拖放事件）
 const extractClipboardData = async (
-  data: DataTransfer | ClipboardItem,
+  data: DataTransfer,
 ): Promise<ExtractedClipboardData | undefined> => {
   if (!data) {
     return undefined;
   }
 
-  if (data instanceof DataTransfer) {
-    return {
-      type: "DataTransfer",
-      types: Array.from(data.types).map((type) => ({
-        type,
-        data: data.getData(type),
-      })),
-      items: data.items
-        ? Array.from(data.items).map((item) => ({
-            kind: item.kind,
-            type: item.type,
-            as_file: createFileInfo(item.getAsFile()),
-          }))
-        : null,
-      files: data.files ? Array.from(data.files).map(createFileInfo) : null,
-    };
-  }
-
-  if (data instanceof ClipboardItem) {
-    return {
-      type: "ClipboardItem",
-      types: await Promise.all(
-        Array.from(data.types).map(async (type) => {
-          const blob = await data.getType(type);
-          return {
-            type: type,
-            data: blob.type.match(/^text\//)
-              ? await blob.text()
-              : createFileInfo(blob as File) || "",
-          };
-        }),
-      ),
-    };
-  }
-
-  return undefined;
+  return {
+    type: "DataTransfer",
+    types: Array.from(data.types).map((type) => ({
+      type,
+      data: data.getData(type),
+    })),
+    items: data.items
+      ? Array.from(data.items).map((item) => ({
+          kind: item.kind,
+          type: item.type,
+          as_file: createFileInfo(item.getAsFile()),
+        }))
+      : null,
+    files: data.files ? Array.from(data.files).map(createFileInfo) : null,
+  };
 };
 
 /**
@@ -117,10 +98,7 @@ const convertToClipboardDataItems = async (
               : undefined,
           metadata: {
             ...metadata,
-            source:
-              extractedData.type === "DataTransfer"
-                ? "datatransfer-types"
-                : "clipboarditem-types",
+            source: "datatransfer-types",
             mimeType: typeData.type,
           },
         });
@@ -191,60 +169,34 @@ const convertToClipboardDataItems = async (
 };
 
 /**
- * 使用现代 Clipboard API 写入剪贴板
+ * 浏览器环境下的写入回退（npm run dev / localhost / HTTPS）
  */
-const copyWithClipboardAPI = async (
+const writeViaBrowser = async (
   content: string,
   format: ClipboardFormat,
-): Promise<CopyResult> => {
-  if (!navigator.clipboard) {
-    throw new Error("浏览器不支持 Clipboard API");
+): Promise<void> => {
+  const clip = navigator.clipboard;
+  if (!clip) throw new Error("当前环境不支持剪贴板 API");
+
+  if (format === "text/html") {
+    const plain = content.replace(/<[^>]+>/g, "").trim();
+    await clip.write([
+      new ClipboardItem({
+        "text/html": new Blob([content], { type: "text/html" }),
+        "text/plain": new Blob([plain], { type: "text/plain" }),
+      }),
+    ]);
+    return;
   }
-
-  const clipboardItem = new ClipboardItem({
-    [format]: new Blob([content], { type: format }),
-  });
-
-  await navigator.clipboard.write([clipboardItem]);
-  return { success: true, message: "复制成功！" };
-};
-
-/**
- * 降级方案：使用 document.execCommand
- */
-const copyWithExecCommand = (content: string): CopyResult => {
-  try {
-    // 创建临时文本区域
-    const textArea = document.createElement("textarea");
-    textArea.value = content;
-    textArea.style.position = "fixed";
-    textArea.style.left = "-999999px";
-    textArea.style.top = "-999999px";
-    document.body.appendChild(textArea);
-
-    // 选择并复制
-    textArea.focus();
-    textArea.select();
-
-    const successful = document.execCommand("copy");
-    document.body.removeChild(textArea);
-
-    if (successful) {
-      return { success: true, message: "复制成功！" };
-    } else {
-      throw new Error("execCommand 复制失败");
-    }
-  } catch (error) {
-    return {
-      success: false,
-      message: `复制失败：${error instanceof Error ? error.message : "未知错误"}`,
-    };
+  if (format === "text/rtf") {
+    throw new Error("浏览器不支持写入 RTF，请在 uTools 中使用");
   }
+  await clip.writeText(content);
 };
 
 /**
  * 主要的剪贴板写入函数
- * 优先使用现代 Clipboard API，失败时降级到 execCommand
+ * uTools 中走 preload 桥接，浏览器中走 Web Clipboard API
  */
 export const copyToClipboard = async (
   content: string,
@@ -256,25 +208,29 @@ export const copyToClipboard = async (
   }
 
   try {
-    // 优先尝试现代 Clipboard API
-    return await copyWithClipboardAPI(content, format);
-  } catch (error) {
-    console.warn("Clipboard API 失败，尝试降级方案:", error);
-
-    // 降级到 execCommand（只支持纯文本）
-    if (format === "text/html") {
-      console.warn("降级方案不支持 HTML 格式，将以纯文本复制");
+    const bridge = window.clipboardBridge;
+    if (bridge) {
+      if (!bridge.write(format, content)) {
+        throw new Error("写入剪贴板失败");
+      }
+    } else {
+      await writeViaBrowser(content, format);
     }
-
-    return copyWithExecCommand(content);
+    return { success: true, message: "复制成功！" };
+  } catch (error) {
+    return {
+      success: false,
+      message: `复制失败：${error instanceof Error ? error.message : "未知错误"}`,
+    };
   }
 };
 
 /**
- * 检查浏览器是否支持 Clipboard API
+ * 检查是否支持剪贴板直接读取
+ * uTools 中由 preload 桥接提供，浏览器中由 Web Clipboard API 提供
  */
-export const isClipboardAPISupported = (): boolean => {
-  return !!navigator.clipboard && !!window.ClipboardItem;
+export const isClipboardReadSupported = (): boolean => {
+  return !!window.clipboardBridge || !!navigator.clipboard?.read;
 };
 
 /**
@@ -650,18 +606,6 @@ export const analyzeContent = async (
   return metadata;
 };
 
-/**
- * 创建图片预览
- */
-export const createImagePreview = (blob: Blob): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-};
-
 // 从 DataTransfer 提取数据（用于 paste 和 drop 事件）
 export const extractDataFromDataTransfer = async (
   dataTransfer: DataTransfer,
@@ -670,63 +614,124 @@ export const extractDataFromDataTransfer = async (
   return convertToClipboardDataItems(extractedData);
 };
 
-// 从 ClipboardItem 提取数据（现代 Clipboard API）
-export const extractDataFromClipboardItem = async (
-  clipboardItem: ClipboardItem,
-): Promise<ClipboardDataItem[]> => {
-  const extractedData = await extractClipboardData(clipboardItem);
-  return convertToClipboardDataItems(extractedData);
+/**
+ * 将 preload 桥接返回的原始条目转换为界面使用的数据项
+ */
+const bridgeEntryToDataItem = async (
+  entry: ClipboardBridgeEntry,
+): Promise<ClipboardDataItem> => {
+  // 剪贴板中的文件 / 文件夹
+  if (entry.file) {
+    const file = entry.file;
+    return {
+      type: detectDataType(file.type || entry.mimeType),
+      content: file,
+      size: file.size,
+      preview: file.type.startsWith("image/") ? file.url : undefined,
+      metadata: {
+        source: "clipboard-files",
+        mimeType: file.type || entry.mimeType,
+        fileInfo: {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+        },
+      },
+    };
+  }
+
+  // 图片以 data URL 返回，包装成文件信息以复用图片预览
+  if (entry.dataUrl) {
+    const file: FileInfo = {
+      name: `clipboard-image.${entry.mimeType.split("/")[1] || "png"}`,
+      size: entry.size || 0,
+      type: entry.mimeType,
+      url: entry.dataUrl,
+    };
+
+    return {
+      type: detectDataType(entry.mimeType),
+      content: file,
+      size: file.size,
+      preview: entry.dataUrl,
+      metadata: {
+        source: "clipboard-image",
+        mimeType: entry.mimeType,
+        formattedSize: formatFileSize(file.size),
+      },
+    };
+  }
+
+  const text = entry.text || "";
+  return {
+    type: detectDataType(entry.mimeType, text),
+    content: text,
+    size: new Blob([text]).size,
+    metadata: {
+      ...(await analyzeContent(text, entry.mimeType)),
+      source: "clipboard-read",
+    },
+  };
+};
+
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+
+/**
+ * 浏览器环境下的读取回退（npm run dev / localhost / HTTPS）
+ */
+const readViaBrowser = async (): Promise<ClipboardBridgeEntry[]> => {
+  const clip = navigator.clipboard;
+  if (!clip) throw new Error("当前环境不支持剪贴板 API，请在 uTools 中运行");
+
+  if (!clip.read) {
+    const text = await clip.readText();
+    return text ? [{ mimeType: "text/plain", text }] : [];
+  }
+
+  const entries: ClipboardBridgeEntry[] = [];
+  for (const item of await clip.read()) {
+    for (const type of item.types) {
+      const blob = await item.getType(type);
+      entries.push(
+        type.startsWith("image/")
+          ? {
+              mimeType: type,
+              dataUrl: await blobToDataUrl(blob),
+              size: blob.size,
+            }
+          : { mimeType: type, text: await blob.text() },
+      );
+    }
+  }
+  return entries;
 };
 
 /**
- * 解析剪贴板内容 - 新的实现
+ * 解析剪贴板内容 - uTools 中走 preload 桥接，浏览器中走 Web Clipboard API
  */
 export const parseClipboardData = async (): Promise<ClipboardParseResult> => {
   try {
-    if (!navigator.clipboard) {
-      throw new Error("浏览器不支持 Clipboard API");
-    }
+    const bridge = window.clipboardBridge;
+    const entries = bridge ? bridge.read() : await readViaBrowser();
 
-    if (!isSecureContext()) {
-      throw new Error("需要安全上下文（HTTPS）才能读取剪贴板");
-    }
-
-    const clipboardItems = await navigator.clipboard.read();
     const dataItems: ClipboardDataItem[] = [];
-
-    // 使用新的提取函数
-    for (const item of clipboardItems) {
-      const itemResults = await extractDataFromClipboardItem(item);
-      dataItems.push(...itemResults);
-    }
-
-    // 如果没有获取到任何数据，尝试读取纯文本
-    if (dataItems.length === 0 && navigator.clipboard.readText) {
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          const detectedType = detectDataType("text/plain", text);
-          const metadata = await analyzeContent(text, "text/plain");
-
-          dataItems.push({
-            type: detectedType,
-            content: text,
-            size: new Blob([text]).size,
-            metadata: {
-              ...metadata,
-              source: "clipboard-text",
-            },
-          });
-        }
-      } catch (error) {
-        console.warn("Failed to read text from clipboard:", error);
-      }
+    for (const entry of entries) {
+      dataItems.push(await bridgeEntryToDataItem(entry));
     }
 
     return {
       source: "read",
       success: true,
-      message: `成功解析 ${dataItems.length} 个数据项`,
+      message: dataItems.length
+        ? `成功解析 ${dataItems.length} 个数据项`
+        : "剪贴板为空",
       data: dataItems,
       timestamp: Date.now(),
     };
@@ -742,12 +747,27 @@ export const parseClipboardData = async (): Promise<ClipboardParseResult> => {
 };
 
 /**
- * 检查是否支持剪贴板读取
+ * 另存为 - uTools 中走系统保存对话框，浏览器中退化为下载
  */
-export const isClipboardReadSupported = (): boolean => {
-  return (
-    !!navigator.clipboard && !!navigator.clipboard.read && isSecureContext()
-  );
+export const saveClipboardFile = async (payload: {
+  name: string;
+  text?: string;
+  dataUrl?: string;
+  sourcePath?: string;
+}): Promise<boolean> => {
+  const bridge = window.clipboardBridge;
+  if (bridge) return bridge.saveFile(payload);
+
+  const blob = payload.dataUrl
+    ? await fetch(payload.dataUrl).then((response) => response.blob())
+    : new Blob([payload.text ?? ""], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = payload.name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
 };
 
 /**
@@ -770,7 +790,7 @@ export const addPasteListener = (
         dataItems.push(...transferResults);
       }
 
-      // 如果没有获取到数据，回退到标准 Clipboard API
+      // 如果没有获取到数据，回退到桥接读取
       if (dataItems.length === 0) {
         const result = await parseClipboardData();
         callback(result);

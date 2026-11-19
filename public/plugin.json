@@ -1,0 +1,15 @@
+{
+  "main": "index.html",
+  "logo": "logo.png",
+  "preload": "preload.js",
+  "pluginSetting": {
+    "height": 640
+  },
+  "features": [
+    {
+      "code": "clipboard-viewer",
+      "description": "解析系统剪贴板的多格式内容，或将文本写入剪贴板",
+      "cmds": ["剪贴板解析", "剪贴板查看", "clipboard"]
+    }
+  ]
+}

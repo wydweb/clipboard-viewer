@@ -1,35 +1,16 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const host = process.env.TAURI_DEV_HOST;
-
-// https://vite.dev/config/
+// 构建产物 dist 即 uTools 插件应用目录，plugin.json / preload.js / logo.png 由 public 目录原样拷贝
 export default defineConfig({
-  // prevent vite from obscuring rust errors
-  clearScreen: false,
-  // tauri expects a fixed port, fail if that port is not available
+  // uTools 以本地文件方式加载插件界面，资源必须使用相对路径
+  base: './',
   server: {
     port: 5173,
-    strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 5183,
-        }
-      : undefined,
   },
-  // to make use of `TAURI_DEBUG` and other env variables
-  // https://tauri.studio/v1/api/config#buildconfig.beforedevcommand
-  envPrefix: ["VITE_", "TAURI_"],
   build: {
-    // Tauri supports es2021
-    target: process.env.TAURI_PLATFORM == "windows" ? "chrome105" : "safari13",
-    // don't minify for debug builds
-    minify: !process.env.TAURI_DEBUG ? "oxc" : false,
-    // produce sourcemaps for debug builds
-    sourcemap: !!process.env.TAURI_DEBUG,
+    outDir: 'dist',
+    target: 'chrome132',
   },
   resolve: {
     tsconfigPaths: true,

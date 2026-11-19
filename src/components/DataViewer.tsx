@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Copy, Check, Download, Maximize2, X, File } from "lucide-react";
 import type { ClipboardDataItem, FileInfo } from "../types";
 import { formatName } from "../utils/format";
+import { copyToClipboard, saveClipboardFile } from "../utils/clipboard";
 import { useClipboardStore } from "../store/useClipboardStore";
 import { MetadataViewer } from "./MetadataViewer";
 
@@ -38,15 +39,15 @@ export function DataViewer({ item, index }: DataViewerProps) {
 
   const copy = async () => {
     if (text === null) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      showMessage("error", "复制失败，请检查浏览器剪贴板权限");
+    const result = await copyToClipboard(text, "text/plain");
+    if (!result.success) {
+      showMessage("error", result.message);
+      return;
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
-  const download = () => {
+  const download = async () => {
     const extension =
       (
         {
@@ -57,20 +58,13 @@ export function DataViewer({ item, index }: DataViewerProps) {
         } as Record<string, string>
       )[item.type] ||
       (item.type.startsWith("image/") ? item.type.split("/")[1] : "txt");
-    const url =
-      fileInfo?.url ||
-      URL.createObjectURL(
-        item.content instanceof Blob
-          ? item.content
-          : new Blob([text || ""], {
-              type: item.metadata?.mimeType || item.type,
-            }),
-      );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileInfo?.name || `clipboard-${index + 1}.${extension}`;
-    link.click();
-    if (!fileInfo?.url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const saved = await saveClipboardFile({
+      name: fileInfo?.name || `clipboard-${index + 1}.${extension}`,
+      sourcePath: fileInfo?.path,
+      dataUrl: fileInfo ? fileInfo.url || undefined : undefined,
+      text: fileInfo ? undefined : text || "",
+    });
+    if (!saved) showMessage("error", "保存失败");
   };
   const renderPreview = () => {
     if (item.type.startsWith("image/") && imageURL)

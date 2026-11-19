@@ -1,28 +1,23 @@
-name: Build and Test
+name: Build uTools plugin
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macos-latest, ubuntu-latest, windows-latest]
-
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -31,83 +26,21 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version-file: .node-version
-          cache: 'npm'
+          node-version: 22
+          cache: npm
 
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Check frontend code
+      - name: Lint
         run: npm run lint
 
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          cache-workspaces: src-tauri -> target
+      - name: Build plugin
+        run: npm run build
 
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libssl-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
-
-      - name: Build Tauri application
-        uses: tauri-apps/tauri-action@v0.5.22
-
-      - name: Prepare artifact details
-        id: prepare_artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          artifact_arch=$(printf '%s' "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')
-
-          case "$RUNNER_OS" in
-            macOS)
-              artifact_dir="src-tauri/target/release/bundle/dmg"
-              artifact_pattern="*.dmg"
-              artifact_name="clipboard-viewer-latest-mac-${artifact_arch}.dmg"
-              ;;
-            Windows)
-              artifact_dir="src-tauri/target/release/bundle/msi"
-              artifact_pattern="*.msi"
-              artifact_name="clipboard-viewer-latest-win-${artifact_arch}.msi"
-              ;;
-            Linux)
-              artifact_dir="src-tauri/target/release/bundle/appimage"
-              artifact_pattern="*.AppImage"
-              artifact_name="clipboard-viewer-latest-linux-${artifact_arch}.AppImage"
-              ;;
-            *)
-              echo "::error::Unsupported runner OS: $RUNNER_OS"
-              exit 1
-              ;;
-          esac
-
-          if [ ! -d "$artifact_dir" ]; then
-            echo "::error::Artifact directory not found: $artifact_dir"
-            exit 1
-          fi
-          artifact_path=$(find "$artifact_dir" -maxdepth 1 -type f -name "$artifact_pattern" -print -quit)
-          if [ -z "$artifact_path" ]; then
-            echo "::error::No $artifact_pattern artifact found in $artifact_dir"
-            exit 1
-          fi
-
-          printf 'path=%s\nname=%s\n' "$artifact_path" "$artifact_name" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Build Artifact
+      - name: Upload plugin package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.prepare_artifact.outputs.name }}
-          path: ${{ steps.prepare_artifact.outputs.path }}
+          name: clipboard-viewer-utools-plugin
+          path: dist
           if-no-files-found: error

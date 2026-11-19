@@ -25,6 +25,30 @@ export interface FileInfo {
   size: number;
   type: string;
   url: string;
+  /** 真实文件路径，仅剪贴板中的文件带该字段，用于另存为 */
+  path?: string;
+  lastModified?: number;
+}
+
+// preload 桥接返回的剪贴板原始条目
+export interface ClipboardBridgeEntry {
+  mimeType: string;
+  text?: string;
+  dataUrl?: string;
+  size?: number;
+  file?: FileInfo;
+}
+
+// preload 暴露的剪贴板桥接接口
+export interface ClipboardBridge {
+  read: () => ClipboardBridgeEntry[];
+  write: (format: string, content: string) => boolean;
+  saveFile: (payload: {
+    name: string;
+    text?: string;
+    dataUrl?: string;
+    sourcePath?: string;
+  }) => boolean;
 }
 
 // 剪贴板数据项接口
@@ -56,7 +80,7 @@ export interface ClipboardParseResult {
 }
 
 // 应用功能模式
-export type AppMode = "write" | "parse" | "inspector";
+export type AppMode = "write" | "parse";
 
 // 应用状态接口
 export interface AppState {
