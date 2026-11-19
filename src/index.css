@@ -504,7 +504,7 @@ kbd {
 .viewer-fullscreen .viewer-body.viewer-body-metadata {
   overflow-y: auto;
 }
-@media (max-width: 900px) {
+@media (max-width: 600px) {
   .metadata-overview,
   .metadata-metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -788,7 +788,7 @@ kbd {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 330px;
+  min-height: 320px;
   padding: 38px 25px;
   text-align: center;
 }
@@ -1065,7 +1065,7 @@ kbd {
   border: 0;
   background: #f5f6f8;
 }
-@media (max-width: 900px) {
+@media (max-width: 600px) {
   .header-identity {
     gap: 18px;
   }
