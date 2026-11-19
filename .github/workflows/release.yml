@@ -1,0 +1,55 @@
+name: Release uTools plugin
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: 打包插件 zip
+        id: pack
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME}"
+          if [ "$TAG" != "v${VERSION}" ]; then
+            echo "标签 ${TAG} 与 package.json 版本 ${VERSION} 不一致，终止发布" >&2
+            exit 1
+          fi
+          NAME="Clipboard.Viewer-${VERSION}-uTools.zip"
+          cd dist
+          zip -r "../${NAME}" .
+          cd ..
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          unzip -l "${NAME}"
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "${{ steps.pack.outputs.name }}" \
+            --title "Clipboard Viewer ${{ github.ref_name }}" \
+            --notes-file .github/release-notes.md
